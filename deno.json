@@ -1,0 +1,11 @@
+{
+  "tasks": {
+	"run": "deno run  --allow-all ./src/main.ts",
+    "dev": "deno run --watch --allow-all ./src/main.ts",
+	"build": "deno compile --allow-all ./src/main.ts"
+  },
+  "imports": {
+    "@std/cli": "jsr:@std/cli@^1.0.32",
+    "@std/path": "jsr:@std/path@^1.1.6"
+  }
+}
