@@ -15,10 +15,13 @@ export function connect(address: string) {
 
 	const socket = new WebSocket(websocketUrl)
 
+    const activeContainerProcesses: Deno.ChildProcess[] = []
+    let server: Deno.HttpServer<Deno.NetAddr> | null = null
+
 	socket.addEventListener('open', async () => {
 		console.log('Successfully connected to the server!')
 
-		const server = Deno.serve(async (request) => {
+		server = Deno.serve(async (request) => {
 		const url = new URL(request.url)
 		const path = url.pathname
 
@@ -76,23 +79,39 @@ export function connect(address: string) {
 
 			console.log(`Launching task id ${message.task.id} with image ${image} and command ${launchCommand}`)
 
-			const process = command.spawn()
+			try {
+                const process = command.spawn()
+                activeContainerProcesses.push(process)
 
-			const result = await process.output()
-			console.log(new TextDecoder().decode(result.stdout))
+                await process.output()
+                activeContainerProcesses.splice(activeContainerProcesses.indexOf(process), 1)
 
-			socket.send(JSON.stringify({
-				type: 'complete',
-				id: message.task.id
-			}))
+                socket.send(JSON.stringify({
+                    type: 'complete',
+                    id: message.task.id
+                }))
+            } catch(exception) {
+                console.warn(`Container exception: ${exception}`)
+            }
 		}
 	})
 
 	socket.addEventListener('error', (error) => {
-		console.error('WebSocket encountered an error:', error)
+		console.error('WebSocket error:', (error as ErrorEvent).message)
 	})
 
-	socket.addEventListener('close', (event) => {
+	socket.addEventListener('close', async (event) => {
 		console.log(`Connection closed. Code: ${event.code}, Reason: ${event.reason}`)
+
+        if(server) await server.shutdown()
+
+        for(const process of activeContainerProcesses) {
+            process.kill()
+        }
+
+        console.warn('Disconnected from server. Attempting reconnection...')
+        setTimeout(() => {
+            connect(address)
+        }, 5000);
 	})
 }
