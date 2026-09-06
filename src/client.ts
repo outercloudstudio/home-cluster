@@ -11,8 +11,6 @@ export function connect(address: string) {
 
 	const websocketUrl = 'ws://' + path.join(host, pathname, 'connect')
 
-	console.log(websocketUrl)
-
 	const socket = new WebSocket(websocketUrl)
 
     const activeContainerProcesses: Deno.ChildProcess[] = []

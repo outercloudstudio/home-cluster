@@ -1,3 +1,5 @@
+import { encodeBase64 } from 'jsr:@std/encoding/base64'
+
 export type TaskLaunchOptions = {
 	image: string,
 	command: string,
@@ -12,11 +14,12 @@ export type Task = {
 
 export type LaunchedTasks = {
 	start: number,
-	task: Task
+	task: Task,
 }
 
 const clients: Record<string, { socket: WebSocket, tasks: LaunchedTasks[] }> = {}
 const taskQueue: Task[] = []
+const proxies: Record<number, { clientSocket: WebSocket, proxy: Deno.TcpListener }> = {}
 
 async function update() {
 	const now = Date.now()
@@ -56,6 +59,8 @@ export function serve(port: number) {
 		const path = url.pathname
 
 		if(request.method === 'GET' && path === '/connect') return await handleConnect(request)
+
+		if(request.method === 'GET' && path === '/proxy') return await handleProxy(request)
 
 		return new Response('403 Forbidden', { status: 403 })
 	})
@@ -114,6 +119,110 @@ async function handleConnect(request: Request): Promise<Response> {
 
 	socket.addEventListener('error', (error) => {
 		console.error('WebSocket error:', (error as ErrorEvent).message)
+	})
+
+	return response
+}
+
+async function handleProxy(request: Request): Promise<Response> {
+	if (request.headers.get('upgrade') !== 'websocket') return new Response('Expected a WebSocket upgrade request.', { status: 426 })
+
+	const { socket, response } = Deno.upgradeWebSocket(request)
+
+	let setup = false
+    let port: number | null = null
+    let listener: Deno.TcpListener | null = null
+
+    async function handleTcpConnections() {
+        if(!listener) return
+        
+        while(true) {
+            try {
+                const connection = await listener.accept()
+                handleTcpConnection(connection)
+            } catch{
+                break
+            }
+        }
+    }
+
+    async function handleTcpConnection(connection: Deno.TcpConn) {
+        const id = crypto.randomUUID()
+
+        socket.send(JSON.stringify({ type: 'new-client', id }))
+
+        console.log(`New tcp connection ${id}`)
+
+        try {
+            while(true) {
+                const buffer = new Uint8Array(4096)
+                const bytesRead = await connection.read(buffer)
+
+                console.log(`Read ${bytesRead} from tcp connection ${id}`)
+
+                if(bytesRead === null) {
+                    connection.close()
+                    
+                    break
+                } else {
+                    socket.send(JSON.stringify({ type: 'bytes', id, bytes: encodeBase64(buffer.slice(0, bytesRead)) }))
+                }
+            }
+        } catch {}
+
+        socket.send(JSON.stringify({ type: 'close-client', id }))
+
+        console.log(`Tcp connection ${id} closed!`)
+    }
+
+	socket.addEventListener('open', () => {
+		console.log('Proxy connected!')
+	})
+
+	socket.addEventListener('message', (event) => {
+		console.log('Message received from proxy:', event.data)
+		
+        let message: any = null
+
+        try {
+            message = JSON.parse(event.data)
+        }catch {}
+
+        if(!message) throw new Error('Failed to parse message!')
+
+		if(!setup) {
+            if(message.type !== 'setup') throw new Error('Proxy websocket received message but has not been set up yet!')
+
+			setup = true
+
+            port = message.port as number
+            listener = Deno.listen({ port })
+
+            if(proxies[port]) {
+                proxies[port].clientSocket.close()
+                proxies[port].proxy.close()
+            }
+
+            proxies[port] = { clientSocket: socket, proxy: listener }
+
+            handleTcpConnections()
+
+            return
+		}
+
+        // proxies[port].proxy.
+	})
+
+	socket.addEventListener('close', () => {
+        if(!listener) return
+        if(!port) return
+
+        listener.close()
+		delete proxies[port]
+	})
+
+	socket.addEventListener('error', (error) => {
+		console.error('Proxy WebSocket error:', (error as ErrorEvent).message)
 	})
 
 	return response

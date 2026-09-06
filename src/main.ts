@@ -2,11 +2,13 @@ import { parseArgs } from '@std/cli/parse-args';
 import { serve } from "./server.ts";
 import { connect } from "./client.ts";
 import { queue } from "./cli.ts";
+import { proxy } from "./proxy.ts";
 
 const args = parseArgs(Deno.args)
 
 const isServer = args.serve ?? false
 const isDaemon = args.daemon ?? false
+const isProxy = args.proxy ?? false
 
 if(isServer) {
 	const port = args.port ?? 8080
@@ -18,6 +20,16 @@ if(isServer) {
 	if(!address) throw new Error('Must pass an address to connect to with --address')
 
 	connect(address)
+} else if(isProxy) {
+    const address = args.address
+	const localPort = args.localPort
+	const remotePort = args.remotePort
+
+    if(!address) throw new Error('Must pass an address to connect to with --address')
+	if(!localPort) throw new Error('Must pass a port to proxy to with --localPort')
+	if(!remotePort) throw new Error('Must pass a port to proxy to with --remotePort')
+
+	proxy(address, localPort, remotePort)
 } else if(args._.includes('queue')) {
 	const image = args.image
 	const command = args.command
