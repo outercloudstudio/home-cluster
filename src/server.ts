@@ -1,4 +1,4 @@
-import { encodeBase64 } from 'jsr:@std/encoding/base64'
+import { decodeBase64, encodeBase64 } from 'jsr:@std/encoding/base64'
 
 export type TaskLaunchOptions = {
 	image: string,
@@ -133,6 +133,9 @@ async function handleProxy(request: Request): Promise<Response> {
     let port: number | null = null
     let listener: Deno.TcpListener | null = null
 
+    const connections: Record<string, Deno.TcpConn> = {}
+    const messageQueue: Record<string, Uint8Array[]> = {}
+
     async function handleTcpConnections() {
         if(!listener) return
         
@@ -153,15 +156,20 @@ async function handleProxy(request: Request): Promise<Response> {
 
         console.log(`New tcp connection ${id}`)
 
+        connections[id] = connection
+        messageQueue[id] = []
+
         try {
             while(true) {
                 const buffer = new Uint8Array(4096)
                 const bytesRead = await connection.read(buffer)
 
-                console.log(`Read ${bytesRead} from tcp connection ${id}`)
+                console.log(`Read ${bytesRead} bytes from tcp connection ${id}`)
 
                 if(bytesRead === null) {
                     connection.close()
+
+                    console.log(`Closing tcp connection due to null bytes ${id}`)
                     
                     break
                 } else {
@@ -170,9 +178,41 @@ async function handleProxy(request: Request): Promise<Response> {
             }
         } catch {}
 
-        socket.send(JSON.stringify({ type: 'close-client', id }))
+        console.log(`Closing tcp connection ${id}`)
 
-        console.log(`Tcp connection ${id} closed!`)
+        if(!connections[id]) {
+            console.log('Connection already closed!')
+
+            return
+        }
+
+        delete connections[id]
+        delete messageQueue[id]
+
+        socket.send(JSON.stringify({ type: 'close-client', id }))
+    }
+
+    async function sendMessages() {
+        for(const id of Object.keys(messageQueue)) {
+            if(messageQueue[id].length === 0) continue
+            if(!connections[id]) continue
+
+            const buffer = messageQueue[id].shift()!
+
+            let pointer = 0
+            
+            while(pointer < buffer.length) {
+                const bytesWritten = await connections[id].write(buffer.slice(pointer, buffer.length))
+                
+                pointer += bytesWritten
+
+                console.log(`Wrote ${bytesWritten} bytes to ${id}!`)
+            }
+        }
+        
+        setTimeout(() => {
+            sendMessages()
+        }, 10);
     }
 
 	socket.addEventListener('open', () => {
@@ -210,7 +250,28 @@ async function handleProxy(request: Request): Promise<Response> {
             return
 		}
 
-        // proxies[port].proxy.
+        if(message.type === 'bytes') {
+            const buffer = decodeBase64(message.bytes)
+
+            console.log(`Recieved bytes for ${message.id}`)
+
+            console.log(new TextDecoder().decode(buffer))
+            messageQueue[message.id].push(buffer)
+        }
+
+        if(message.type === 'close-client') {
+            console.log(`Client closed from client side ${message.id}`)
+
+            if(!connections[message.id]) {
+                console.log('Connection already closed!')
+
+                return
+            }
+
+            connections[message.id].close()
+            delete connections[message.id]
+            delete messageQueue[message.id]
+        }
 	})
 
 	socket.addEventListener('close', () => {
@@ -224,6 +285,8 @@ async function handleProxy(request: Request): Promise<Response> {
 	socket.addEventListener('error', (error) => {
 		console.error('Proxy WebSocket error:', (error as ErrorEvent).message)
 	})
+
+    sendMessages()
 
 	return response
 }

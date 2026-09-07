@@ -20,8 +20,8 @@ export function connect(address: string) {
 		console.log('Successfully connected to the server!')
 
 		server = Deno.serve(async (request) => {
-		const url = new URL(request.url)
-		const path = url.pathname
+            const url = new URL(request.url)
+            const path = url.pathname
 
 			if(request.method === 'POST' && path === '/queue') {
 				const launchOptions = await request.json()
