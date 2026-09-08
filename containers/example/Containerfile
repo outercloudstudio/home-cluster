@@ -1,0 +1,9 @@
+FROM denoland/deno:alpine
+
+RUN apk add --no-cache curl git
+
+RUN git clone https://github.com/outercloudstudio/home-cluster.git /root/home-cluster
+
+WORKDIR /root/home-cluster
+
+CMD [ "deno", "--allow-all", "./containers/example/decoy.ts", "&", "deno", "task", "run", "--proxy", "--localPort", "2000", "--remotePort", "25566", "--address", "https://34.10.141.230:8080" ]
